@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BUNKERED.FUN - GIGA HODL Protocol</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --terminal-bg: #0a100a;
+            --terminal-fg: #33ff33;
+            --terminal-fg-dark: #008800;
+        }
+        body {
+            font-family: 'VT323', monospace;
+            background: var(--terminal-bg);
+            color: var(--terminal-fg);
+            font-size: 20px;
+        }
+        .terminal-glow { text-shadow: 0 0 8px var(--terminal-fg-dark); }
+        .main-container {
+            border: 2px solid var(--terminal-fg-dark);
+            background: rgba(10, 20, 10, 0.1);
+            min-height: 90vh;
+        }
+        #canvas-container { cursor: crosshair; }
+        .bunkered-input {
+            background: transparent; border: none;
+            color: var(--terminal-fg); caret-color: var(--terminal-fg);
+            width: 200px;
+        }
+        .bunkered-input:focus { outline: none; }
+        .blinking-cursor {
+            display: inline-block; width: 10px; height: 1.2em;
+            background: var(--terminal-fg);
+            animation: blink 1s step-end infinite;
+        }
+        @keyframes blink { from, to { background: transparent; } 50% { background: var(--terminal-fg); } }
+        .status-panel {
+            border: 1px solid var(--terminal-fg-dark); padding: 1rem;
+            background: rgba(10, 20, 10, 0.25); height: 100%;
+        }
+        .bunkered-button {
+             background: transparent; border: 1px solid var(--terminal-fg-dark);
+             padding: 0.5rem 1rem; color: var(--terminal-fg);
+        }
+        .bunkered-button:hover { background: var(--terminal-fg-dark); color: var(--terminal-bg); }
+        .hidden { display: none; }
+        #live-feed {
+            position: relative;
+            display: flex;
+            flex-direction: column-reverse;
+            height: 12rem; /* 5 lines of text approx */
+        }
+        .feed-item {
+            animation: fadeIn 0.5s ease-in-out;
+            margin-bottom: 0.5rem;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+    <div class="main-container relative p-4 md:p-6 mx-auto max-w-7xl">
+        <h1 class="text-3xl md:text-5xl font-bold terminal-glow text-center mb-2">[ BUNKERED.FUN ]</h1>
+        <p class="text-center text-sm terminal-glow mb-6">GIGA-CHAD HODL-OUT DEPLOYMENT PROTOCOL v3.1 (CRISP)</p>
+
+        <div id="content-area" class="grid grid-cols-1 md:grid-cols-5 gap-6">
+            <div id="status-container" class="md:col-span-2 hidden">
+                <div class="status-panel">
+                    <h2 class="terminal-glow font-bold text-xl mb-2">HODL-OUT ASSIGNED TO:</h2>
+                    <p class="terminal-glow text-2xl mb-4" id="bunkered-id"></p>
+                    <div id="bunkered-status-content"></div>
+                </div>
+                 <div id="controls" class="mt-4 text-center">
+                     <button id="download-button" class="bunkered-button">SAVE PROOF OF HODL</button>
+                     <button id="share-button" class="bunkered-button ml-2">SHILL YOUR SETUP</button>
+                 </div>
+            </div>
+            <div id="canvas-container" class="md:col-span-3 h-96 md:h-auto min-h-[50vh] border-2 border-green-900 hidden"></div>
+             <div id="input-screen" class="col-span-full text-center py-20">
+                <div id="live-feed-container" class="max-w-xl mx-auto text-left mb-6"></div>
+                <p id="loading-text" class="text-xl terminal-glow mb-4 hidden">AWAITING DEGEN HANDLE...</p>
+                <div id="input-prompt" class="flex justify-center items-center text-xl">
+                    <span>//ENTER_DEGEN:&nbsp;@</span>
+                    <input type="text" id="username-input" class="bunkered-input terminal-glow" autocomplete="off" placeholder="YourUsername">
+                    <span class="blinking-cursor"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <audio id="audio-hum" loop src="https://cdn.glitch.global/031b533a-8732-411a-bbc3-a729119c4176/hum.wav?v=1719087591783"></audio>
+    <audio id="audio-click" src="https://cdn.glitch.global/031b533a-8732-411a-bbc3-a729119c4176/click.wav?v=1719087590839"></audio>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+        import { FontLoader } from 'three/addons/loaders/FontLoader.js';
+        import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
+
+        // --- DOM Elements & Audio ---
+        const dom = {
+            usernameInput: document.getElementById('username-input'),
+            inputScreen: document.getElementById('input-screen'),
+            loadingText: document.getElementById('loading-text'),
+            inputPrompt: document.getElementById('input-prompt'),
+            liveFeedContainer: document.getElementById('live-feed-container'),
+            statusContainer: document.getElementById('status-container'),
+            canvasContainer: document.getElementById('canvas-container'),
+            bunkeredIdEl: document.getElementById('bunkered-id'),
+            statusContentEl: document.getElementById('bunkered-status-content'),
+            downloadBtn: document.getElementById('download-button'),
+            shareBtn: document.getElementById('share-button'),
+        };
+        const audio = {
+            hum: document.getElementById('audio-hum'),
+            click: document.getElementById('audio-click')
+        };
+        audio.hum.volume = 0.2;
+
+        // --- THREE.JS SETUP ---
+        let scene, camera, renderer, composer;
+        let interactiveObjects = [];
+        let currentBunkerData = {}; // To store data for sharing
+        const textureLoader = new THREE.TextureLoader();
+        const concreteTexture = textureLoader.load('https://cdn.glitch.global/031b533a-8732-411a-bbc3-a729119c4176/concrete.jpg?v=1719087591242');
+        concreteTexture.wrapS = THREE.RepeatWrapping; concreteTexture.wrapT = THREE.RepeatWrapping;
+        concreteTexture.repeat.set(4, 4);
+        const greenCandleTex = textureLoader.load('https://cdn.glitch.global/031b533a-8732-411a-bbc3-a729119c4176/chart_up.png?v=1719088651031');
+        const redCandleTex = textureLoader.load('https://cdn.glitch.global/031b533a-8732-411a-bbc3-a729119c4176/chart_down.png?v=1719088650630');
+
+        function initThreeJS() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(60, dom.canvasContainer.clientWidth / dom.canvasContainer.clientHeight, 0.1, 1000);
+            camera.position.set(0, 6, 14);
+            renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+            renderer.setSize(dom.canvasContainer.clientWidth, dom.canvasContainer.clientHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.shadowMap.enabled = true;
+            dom.canvasContainer.appendChild(renderer.domElement);
+
+            const controls = new OrbitControls(camera, renderer.domElement);
+            controls.target.set(0, 1, 0);
+
+            // Lighting & Fog
+            const hemiLight = new THREE.HemisphereLight( 0x40ff40, 0x204020, 1.2 );
+            scene.add( hemiLight );
+            const dirLight = new THREE.DirectionalLight( 0xffffff, 1.2 );
+            dirLight.position.set( -10, 10, 5 );
+            dirLight.castShadow = true;
+            scene.add( dirLight );
+            const bgColor = 0x0a100a;
+            scene.background = new THREE.Color(bgColor);
+            scene.fog = new THREE.FogExp2(bgColor, 0.04);
+            
+            // --- NEW: Sharper Post-Processing ---
+            composer = new EffectComposer(renderer);
+            composer.addPass(new RenderPass(scene, camera));
+            
+            // A well-tuned bloom pass for glow without excessive blur
+            const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.6, 0.4, 0.7);
+            composer.addPass(bloomPass);
+
+            composer.addPass(new OutputPass());
+
+            animate();
+        }
+
+        // --- Bunker Generation ---
+        function generateBunkered(username, font) {
+            interactiveObjects = []; // Reset interactive objects
+            let bunkeredGroup = new THREE.Group();
+            let seed = 0;
+            for (let i = 0; i < username.length; i++) seed += username.charCodeAt(i);
+            const random = () => { let x = Math.sin(seed++) * 10000; return x - Math.floor(x); };
+
+            const concrete = new THREE.MeshStandardMaterial({ map: concreteTexture, roughness: 0.9 });
+            const floor = new THREE.Mesh(new THREE.BoxGeometry(20, 0.2, 20), concrete);
+            floor.receiveShadow = true;
+            const wall1 = new THREE.Mesh(new THREE.BoxGeometry(0.2, 8, 20), concrete);
+            wall1.position.set(-10, 4, 0); wall1.castShadow = true;
+            const wall2 = new THREE.Mesh(new THREE.BoxGeometry(20, 8, 0.2), concrete);
+            wall2.position.set(0, 4, -10); wall2.castShadow = true;
+            bunkeredGroup.add(floor, wall1, wall2);
+            
+            createUsernameArt(username, bunkeredGroup, font);
+
+            const bunkerTypes = ['ALPHA OPS', 'THE VAULT', 'HACKER\'S DEN', 'THE DEGEN\'S DEN'];
+            const myBunkerType = bunkerTypes[Math.floor(random() * bunkerTypes.length)];
+
+            const bags = ['$WIF', '$BONK', '$BODEN', '$TREMP', '$POPCAT', '$GME', '$MOTHER', '$SLERF'];
+            const myBag = bags[Math.floor(random() * bags.length)];
+            const sentiment = random() > 0.15 ? 'GIGA BULLISH' : 'DOWN BAD';
+            const lastRug = Math.floor(random() * 420);
+            let myAlpha, myArtifact;
+
+            switch (myBunkerType) {
+                case 'THE VAULT':
+                    myAlpha = 'HARD WALLET STORAGE';
+                    myArtifact = 'GOLD-PLATED LEDGER';
+                    createVault(bunkeredGroup, random);
+                    createClutter(Math.floor(random() * 5), bunkeredGroup, random);
+                    break;
+                case 'HACKER\'S DEN':
+                    myAlpha = 'ALPHA LEAK TERMINAL';
+                    myArtifact = 'SCROLLING MATRIX CODE';
+                    createHackersDen(bunkeredGroup, random);
+                    break;
+                case 'THE DEGEN\'S DEN':
+                    myAlpha = '5-MONITOR CHAOS STATION';
+                    myArtifact = 'WHITEBOARD OF BROKEN DREAMS';
+                    createDegensDen(bunkeredGroup, random);
+                    createClutter(15 + Math.floor(random() * 10), bunkeredGroup, random);
+                    createPosters(bunkeredGroup, random);
+                    break;
+                default: // 'ALPHA OPS'
+                    const alphaSources = ['DUAL-MONITOR BATTLESTATION', 'PUMP.FUN LAUNCHPAD', 'RUG SURVEILLANCE', 'GIGA-BRAIN TANK'];
+                    myAlpha = alphaSources[Math.floor(random() * alphaSources.length)];
+                    const artifacts = ['DOGWIFHAT', 'RARE PEPE STATUE', 'HOVERING SOLANA LOGO', 'FRAMED GOD CANDLE', 'MYSTICAL ETHER CRYSTAL'];
+                    myArtifact = artifacts[Math.floor(random() * artifacts.length)];
+                    
+                    createAlphaSource(myAlpha, bunkeredGroup, random);
+                    createArtifact(myArtifact, bunkeredGroup, random);
+                    createClutter(Math.floor(random() * 10), bunkeredGroup, random);
+                    createPosters(bunkeredGroup, random);
+            }
+            
+            currentBunkerData = {
+                username: username,
+                bunkerType: myBunkerType,
+                alpha: myAlpha,
+                bag: myBag,
+                artifact: myArtifact,
+                sentiment: sentiment,
+            };
+
+            dom.bunkeredIdEl.textContent = `@${username.toUpperCase()}`;
+            dom.statusContentEl.innerHTML = `
+                <p class="mb-1">> BUNKER TYPE: <span class="terminal-glow">${myBunkerType}</span></p>
+                <p class="mb-1">> ALPHA: <span class="terminal-glow">${myAlpha}</span></p>
+                <p class="mb-1">> MAIN BAG: <span class="terminal-glow">${myBag}</span></p>
+                <p class="mb-1">> ARTIFACT: <span class="terminal-glow">${myArtifact}</span></p>
+                <p class="mb-1">> DAYS SINCE LAST RUG: <span class="terminal-glow">${lastRug}</span></p>
+                <p class="mt-4">> SENTIMENT: <span class="terminal-glow">${sentiment}</span></p>
+            `;
+            scene.add(bunkeredGroup);
+        }
+        
+        // --- Enhanced Model Creation ---
+        function createAlphaSource(type, group, random) {
+            const metal = new THREE.MeshStandardMaterial({color: 0x444444, roughness: 0.4});
+            const darkMetal = new THREE.MeshStandardMaterial({color: 0x111111});
+            const desk = new THREE.Mesh(new THREE.BoxGeometry(6, 0.2, 2.5), metal);
+            desk.position.set(-7, 1.5, 0); desk.castShadow = true;
+            group.add(desk);
+            
+            const m1 = new THREE.Mesh(new THREE.BoxGeometry(2.5, 1.5, 0.2), darkMetal);
+            const screenMat = new THREE.MeshStandardMaterial({map: greenCandleTex, emissive: 0x00ff00, emissiveIntensity: 0.8 });
+            const s1 = new THREE.Mesh(new THREE.BoxGeometry(2.3, 1.3, 0.1), screenMat);
+            s1.position.z = 0.1;
+            m1.add(s1);
+            m1.position.set(-8, 2.45, -0.5);
+            m1.userData = { clickable: true, type: 'monitor', screen: s1 };
+            group.add(m1);
+            interactiveObjects.push(m1);
+
+            if (type === 'DUAL-MONITOR BATTLESTATION') {
+                const m2 = m1.clone();
+                m2.children[0].material = new THREE.MeshStandardMaterial({map: redCandleTex, emissive: 0xff0000, emissiveIntensity: 0.6 });
+                m2.position.x -= 2.8;
+                m2.userData = { clickable: true, type: 'monitor', screen: m2.children[0] };
+                group.add(m2);
+                interactiveObjects.push(m2);
+            }
+        }
+        
+        function createArtifact(item, group, random) {
+            const artifactGroup = new THREE.Group();
+            switch(item){
+                case 'DOGWIFHAT': {
+                    const headMat = new THREE.MeshStandardMaterial({color: 0xD2B48C});
+                    const hatMat = new THREE.MeshStandardMaterial({color: 0xFFC0CB, roughness:1});
+                    const head = new THREE.Mesh(new THREE.SphereGeometry(0.6), headMat);
+                    const hat = new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.5,1,16), hatMat);
+                    hat.position.y = 0.6; hat.rotation.z = 0.3;
+                    artifactGroup.add(head, hat);
+                    break;
+                }
+                case 'HOVERING SOLANA LOGO': {
+                    const solMat = new THREE.MeshStandardMaterial({color: 0x00d7ff, metalness: 0.8, roughness: 0.2, emissive: 0x33bbff, emissiveIntensity: 0.5});
+                    const part1 = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1, 0.2), solMat); part1.rotation.y = Math.PI / 3;
+                    const part2 = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1, 0.2), solMat);
+                    const part3 = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1, 0.2), solMat); part3.rotation.y = -Math.PI / 3;
+                    artifactGroup.add(part1, part2, part3);
+                    artifactGroup.userData = { animatable: true, type: 'hover' };
+                    break;
+                }
+                case 'RARE PEPE STATUE': {
+                    const pepeMat = new THREE.MeshStandardMaterial({color: 0x32CD32});
+                    const head = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1, 1.5), pepeMat);
+                    const eyeMat = new THREE.MeshBasicMaterial({color: 0xffffff});
+                    const pupilMat = new THREE.MeshBasicMaterial({color: 0x000000});
+                    const leftEye = new THREE.Mesh(new THREE.SphereGeometry(0.3), eyeMat);
+                    leftEye.position.set(-0.4, 0.2, 0.76);
+                    const rightEye = new THREE.Mesh(new THREE.SphereGeometry(0.3), eyeMat);
+                    rightEye.position.set(0.4, 0.2, 0.76);
+                    const leftPupil = new THREE.Mesh(new THREE.SphereGeometry(0.1), pupilMat);
+                    leftPupil.position.z = 0.25;
+                    const rightPupil = new THREE.Mesh(new THREE.SphereGeometry(0.1), pupilMat);
+                    rightPupil.position.z = 0.25;
+                    leftEye.add(leftPupil);
+                    rightEye.add(rightPupil);
+                    artifactGroup.add(head, leftEye, rightEye);
+                    break;
+                }
+                case 'FRAMED GOD CANDLE': {
+                    const frameMat = new THREE.MeshStandardMaterial({color: 0x8B4513});
+                    const frame = new THREE.Mesh(new THREE.BoxGeometry(1.5, 2.5, 0.2), frameMat);
+                    const candleMat = new THREE.MeshBasicMaterial({map: greenCandleTex});
+                    const candle = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 2.2), candleMat);
+                    candle.position.z = 0.11;
+                    frame.add(candle);
+                    artifactGroup.add(frame);
+                    break;
+                }
+                case 'MYSTICAL ETHER CRYSTAL': {
+                    const crystalMat = new THREE.MeshStandardMaterial({
+                        color: 0x7F00FF, emissive: 0x5500aa, emissiveIntensity: 0.7,
+                        metalness: 0.4, roughness: 0.2, transparent: true, opacity: 0.8
+                    });
+                    const crystal = new THREE.Mesh(new THREE.IcosahedronGeometry(0.8, 0), crystalMat);
+                    artifactGroup.add(crystal);
+                    artifactGroup.userData = { animatable: true, type: 'hover' };
+                    break;
+                }
+                default: {
+                    const pepeMat = new THREE.MeshStandardMaterial({color: 0x32CD32});
+                    const statue = new THREE.Mesh(new THREE.BoxGeometry(1, 2, 1), pepeMat);
+                    artifactGroup.add(statue);
+                }
+             }
+             artifactGroup.position.set(3, 2, -8);
+             artifactGroup.traverse(c => c.castShadow = true);
+             group.add(artifactGroup);
+        }
+
+        function createVault(group, random) {
+            const wallMat = new THREE.MeshStandardMaterial({ color: 0x555555, roughness: 0.2, metalness: 0.8 });
+            group.children.forEach(child => {
+                if (child instanceof THREE.Mesh && child.geometry.type === 'BoxGeometry') {
+                    child.material = wallMat;
+                }
+            });
+
+            const darkMetal = new THREE.MeshStandardMaterial({color: 0x222222, metalness: 0.9, roughness: 0.5});
+            const safe = new THREE.Mesh(new THREE.BoxGeometry(4, 5, 3), darkMetal);
+            safe.position.set(-6, 2.5, 0);
+            safe.castShadow = true;
+
+            const dial = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.2, 32), new THREE.MeshStandardMaterial({color: 0x888888, metalness: 1.0}));
+            dial.position.set(0, 0.5, 1.6);
+            dial.rotation.x = Math.PI / 2;
+            safe.add(dial);
+            group.add(safe);
+
+            const goldMat = new THREE.MeshStandardMaterial({color: 0xffd700, metalness: 1.0, roughness: 0.3, emissive: 0x996515, emissiveIntensity: 0.2});
+            const numBars = 5 + Math.floor(random() * 15);
+            for(let i = 0; i < numBars; i++) {
+                const bar = new THREE.Mesh(new THREE.BoxGeometry(1, 0.5, 0.3), goldMat);
+                bar.position.set( 3 + (random() - 0.5) * 4, 0.25 + (i * 0.5), -8 + (random() - 0.5) * 2 );
+                bar.rotation.y = random() * Math.PI;
+                bar.castShadow = true;
+                group.add(bar);
+            }
+             const coinMat = new THREE.MeshStandardMaterial({color: 0xffd700, metalness: 0.8, roughness: 0.4});
+            const numPiles = Math.floor(random() * 4);
+            for(let i = 0; i < numPiles; i++) {
+                const pile = new THREE.Group();
+                const numCoins = 10 + Math.floor(random() * 20);
+                for(let j = 0; j < numCoins; j++) {
+                    const coin = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.02, 16), coinMat);
+                    coin.position.set((random()-0.5) * 0.5, j * 0.03, (random()-0.5) * 0.5);
+                    coin.rotation.x = (random() - 0.5) * 0.2;
+                    coin.rotation.z = (random() - 0.5) * 0.2;
+                    pile.add(coin);
+                }
+                pile.position.set((random()-0.5) * 8, 0.1, (random()-0.5) * 8);
+                group.add(pile);
+            }
+
+            const cashMat = new THREE.MeshStandardMaterial({color: 0x006400});
+            const numStacks = 2 + Math.floor(random() * 4);
+            for(let i=0; i<numStacks; i++) {
+                const stack = new THREE.Group();
+                const numBills = 10 + Math.floor(random() * 10);
+                for(let j=0; j<numBills; j++) {
+                    const bill = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.02, 1), cashMat);
+                    bill.position.y = j * 0.02;
+                    bill.position.x += (random() - 0.5) * 0.1;
+                    bill.position.z += (random() - 0.5) * 0.1;
+                    bill.rotation.y = (random() - 0.5) * 0.2;
+                    stack.add(bill);
+                }
+                stack.position.set((random()-0.5) * 6, 0.1 + (numBills * 0.01), (random()-0.5) * 6);
+                stack.traverse(c => c.castShadow = true);
+                group.add(stack);
+            }
+        }
+
+        function createHackersDen(group, random) {
+            const wallMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.5 });
+            group.children.forEach(child => {
+                if (child instanceof THREE.Mesh && child.geometry.type === 'BoxGeometry') {
+                    child.material = wallMat;
+                }
+            });
+
+            const darkMetal = new THREE.MeshStandardMaterial({color: 0x111111, metalness:0.8, roughness:0.4});
+            
+            // Server racks
+            const numRacks = 2 + Math.floor(random() * 3); // 2 to 4 racks
+            for(let i=0; i < numRacks; i++) {
+                const rack = new THREE.Mesh(new THREE.BoxGeometry(1.5, 6, 2.5), darkMetal);
+                rack.position.set(-8 + i * 2.2, 3, -8);
+                rack.castShadow = true;
+                group.add(rack);
+            }
+            
+            // Desk
+            const desk = new THREE.Mesh(new THREE.BoxGeometry(8, 0.2, 3), darkMetal);
+            desk.position.set(2, 1.5, 0); desk.castShadow = true;
+            group.add(desk);
+
+            // Monitors
+            const numMonitors = 2 + Math.floor(random() * 2); // 2 or 3 monitors
+            const screenMat = new THREE.MeshStandardMaterial({map: greenCandleTex, emissive: 0x00ff00, emissiveIntensity: 0.8 });
+            for(let i=0; i<numMonitors; i++) {
+                const monitor = new THREE.Mesh(new THREE.BoxGeometry(2.5, 1.5, 0.2), darkMetal);
+                const screen = new THREE.Mesh(new THREE.BoxGeometry(2.3, 1.3, 0.1), screenMat);
+                screen.position.z = 0.1;
+                monitor.add(screen);
+                const totalWidth = numMonitors * 2.8;
+                monitor.position.set(i * 2.8 - totalWidth / 2 + 1.4, 2.45, 0);
+                monitor.rotation.y = -0.2;
+                monitor.userData = { clickable: true, type: 'monitor', screen: screen };
+                group.add(monitor);
+                interactiveObjects.push(monitor);
+            }
+            
+            const numCables = 4 + Math.floor(random() * 6);
+            const cableMat = new THREE.MeshStandardMaterial({color: 0x1a1a1a, roughness: 0.9});
+            for (let i = 0; i < numCables; i++) {
+                const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 3 + random() * 5, 8), cableMat);
+                cable.position.set((random() - 0.5) * 15, 0.1, (random() - 0.5) * 15);
+                cable.rotation.set(random() * Math.PI, random() * Math.PI, random() * Math.PI);
+                group.add(cable);
+            }
+        }
+
+        function createDegensDen(group, random) {
+            // Desk
+            const darkMetal = new THREE.MeshStandardMaterial({color: 0x1a1a1a});
+            const desk = new THREE.Mesh(new THREE.BoxGeometry(12, 0.2, 3.5), darkMetal);
+            desk.position.set(0, 1.5, 0); desk.castShadow = true;
+            group.add(desk);
+
+            // Monitors
+            const monitorTextures = [greenCandleTex, redCandleTex];
+            for(let i=0; i<5; i++) {
+                const screenMat = new THREE.MeshStandardMaterial({
+                    map: monitorTextures[Math.floor(random() * monitorTextures.length)], 
+                    emissive: random() > 0.5 ? 0x00ff00 : 0xff0000, 
+                    emissiveIntensity: 0.7 
+                });
+                const monitor = new THREE.Mesh(new THREE.BoxGeometry(2.5, 1.5, 0.2), darkMetal);
+                const screen = new THREE.Mesh(new THREE.BoxGeometry(2.3, 1.3, 0.1), screenMat);
+                screen.position.z = 0.1;
+                monitor.add(screen);
+                monitor.position.set(i * 2.6 - 5.2, 2.45, -1);
+                monitor.rotation.y = -0.1 + (i * 0.05);
+                group.add(monitor);
+            }
+
+            // Whiteboard
+            const whiteboardMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
+            const whiteboard = new THREE.Mesh(new THREE.BoxGeometry(4, 3, 0.1), whiteboardMat);
+            
+            const canvas = document.createElement('canvas');
+            canvas.width = 512; canvas.height = 384;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#eee'; ctx.fillRect(0, 0, 512, 384);
+            ctx.strokeStyle = '#222'; ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.moveTo(50, 300); ctx.lineTo(150, 150); ctx.lineTo(250, 250); ctx.lineTo(350, 100); ctx.lineTo(450, 200); ctx.stroke();
+            ctx.strokeStyle = '#ff0000'; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.arc(250, 250, 50, 0, Math.PI * 2); ctx.stroke();
+            ctx.font = '30px monospace'; ctx.fillStyle = '#0000ff'; ctx.fillText('$Lambo?', 180, 80);
+
+            whiteboard.material.map = new THREE.CanvasTexture(canvas);
+            whiteboard.position.set(6, 4, -9.8);
+            group.add(whiteboard);
+        }
+
+        function createUsernameArt(username, group, font) {
+            const textMat = new THREE.MeshStandardMaterial({color: 0x33ff33, emissive: 0x33ff33, emissiveIntensity: 0.5});
+            const geometry = new TextGeometry(`@${username.toUpperCase()}`, {
+                font: font,
+                size: 0.8,
+                height: 0.1,
+                curveSegments: 12,
+            });
+            geometry.center();
+            const textMesh = new THREE.Mesh(geometry, textMat);
+            textMesh.position.set(0, 5, -9.8);
+            textMesh.castShadow = true;
+            group.add(textMesh);
+        }
+
+        function createClutter(amount, group, random){
+            const clutterTypes = ['pizza', 'soda', 'energyDrink'];
+            for(let i=0; i<amount; i++) {
+                const type = clutterTypes[Math.floor(random() * clutterTypes.length)];
+                const clutterObject = new THREE.Group();
+                if (type === 'pizza') {
+                    const boxMat = new THREE.MeshStandardMaterial({color: 0x96694F});
+                    const box = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.1, 0.8), boxMat);
+                    clutterObject.add(box);
+                    clutterObject.position.y = 0.05;
+                } else if (type === 'soda') {
+                    const canMat = new THREE.MeshStandardMaterial({color: 0xCCCCCC, metalness: 0.8, roughness: 0.4});
+                    const can = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.25, 16), canMat);
+                    clutterObject.add(can);
+                    clutterObject.position.y = 0.125;
+                } else { // energyDrink
+                     const canMat = new THREE.MeshStandardMaterial({color: 0x111111, metalness: 0.6, roughness: 0.5});
+                     const can = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.35, 16), canMat);
+                     clutterObject.add(can);
+                     clutterObject.position.y = 0.175;
+                }
+                clutterObject.position.x = (random() - 0.5) * 18;
+                clutterObject.position.z = (random() - 0.5) * 18;
+                clutterObject.position.y += 0.1;
+                clutterObject.rotation.y = random() * Math.PI * 2;
+                clutterObject.traverse(c => c.castShadow = true);
+                group.add(clutterObject);
+            }
+        }
+        function createPosters(group, random) {
+            const posterTextures = [greenCandleTex, redCandleTex];
+            const numPosters = 1 + Math.floor(random() * 3);
+            for(let i = 0; i < numPosters; i++) {
+                const posterMat = new THREE.MeshBasicMaterial({ map: posterTextures[Math.floor(random() * posterTextures.length)] });
+                const poster = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 2), posterMat);
+                if (random() > 0.4) {
+                    poster.position.set((random() - 0.5) * 15, 3 + (random() -0.5) * 2, -9.9);
+                } else {
+                    poster.position.set(-9.9, 3 + (random() -0.5) * 2, (random() - 0.5) * 15);
+                    poster.rotation.y = Math.PI / 2;
+                }
+                group.add(poster);
+            }
+        }
+
+        function animate(time) {
+            requestAnimationFrame(animate);
+            scene.traverse(child => {
+                if(child.userData.animatable && child.userData.type === 'hover'){
+                    child.rotation.y += 0.01;
+                    child.position.y = 2 + Math.sin(time * 0.001) * 0.2;
+                }
+            });
+            composer.render();
+        }
+        
+        // --- Interactivity ---
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        function onClick(event) {
+            const rect = dom.canvasContainer.getBoundingClientRect();
+            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(interactiveObjects, true);
+            if (intersects.length > 0) {
+                const object = intersects[0].object;
+                if(object.parent.userData.type === 'monitor'){
+                    audio.click.play();
+                    object.parent.userData.screen.material.map = redCandleTex;
+                }
+            }
+        }
+        window.addEventListener('click', onClick);
+        
+        // --- UI & Logic ---
+        let feedInterval;
+
+        function startSequence(username) {
+            clearInterval(feedInterval);
+            dom.liveFeedContainer.classList.add('hidden');
+            dom.loadingText.classList.remove('hidden');
+            dom.inputPrompt.classList.add('hidden');
+            
+            let i = 0;
+            const messages = ["SYNCING WITH JUPITER...", "CHECKING WALLET...", "PUMPING THE CHART...", "RUG-PULL IMMINENT... JK", "CHART SENT. LFG."];
+            const interval = setInterval(() => {
+                if (i < messages.length) {
+                    dom.loadingText.textContent = messages[i]; i++;
+                } else {
+                    clearInterval(interval);
+                    const fontLoader = new FontLoader();
+                    fontLoader.load('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/fonts/helvetiker_bold.typeface.json', (font) => {
+                        audio.hum.play();
+                        dom.inputScreen.classList.add('hidden');
+                        dom.statusContainer.classList.remove('hidden');
+                        dom.canvasContainer.classList.remove('hidden');
+                        initThreeJS();
+                        generateBunkered(username, font);
+                    });
+                }
+            }, 600);
+        }
+        
+        dom.usernameInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                const username = dom.usernameInput.value.trim().replace('@','');
+                if (username) {
+                    dom.usernameInput.readOnly = true;
+                    startSequence(username);
+                }
+            }
+        });
+
+        dom.downloadBtn.addEventListener('click', () => {
+            const username = dom.usernameInput.value.trim().replace('@', '') || 'degen';
+            const link = document.createElement('a');
+            link.href = renderer.domElement.toDataURL('image/png');
+            link.download = `bunkered-hodl-out-${username}.png`;
+            link.click();
+        });
+        dom.shareBtn.addEventListener('click', () => {
+             if (!currentBunkerData.username) return;
+
+            const text = `Just generated my HODL-OUT on bunkered.fun!\n\nBunker: ${currentBunkerData.bunkerType}\nAlpha: ${currentBunkerData.alpha}\nMain Bag: ${currentBunkerData.bag}\nSentiment: ${currentBunkerData.sentiment}\n\nCheck out my setup! (Don't forget to DL and attach your proof-of-hodl image)`;
+            const url = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&hashtags=bunkeredfun,memecoins,solana`;
+            window.open(url, '_blank');
+        });
+
+        // --- Live Feed Logic ---
+        const feedUsernames1 = ['Crypto', 'Degen', 'Solana', 'Giga', 'Based', 'Ape', 'Diamond', 'Laser', 'Pepe'];
+        const feedUsernames2 = ['Chad', 'Whale', 'HODL', 'Maxi', 'Lord', 'King', 'Boi', 'Cat', 'Ponk'];
+        const feedUsernames3 = ['ETH', 'SOL', 'OG', '69', '420', 'NFT', 'GM', 'WAGMI', 'LFG'];
+        const feedActions = [
+            'just entered THE VAULT.',
+            'is feeling GIGA BULLISH.',
+            'just aped into $WIF.',
+            'is shilling $BONK.',
+            'discovered a RARE PEPE STATUE.',
+            'just got rugged.',
+            'is watching the charts.',
+            'just deployed a new contract.',
+            'is in a HACKER\'S DEN.',
+            'found the MYSTICAL ETHER CRYSTAL.',
+            'is having pizza in THE DEGEN\'S DEN.'
+        ];
+
+        function generateRandomFeedItem() {
+            const name1 = feedUsernames1[Math.floor(Math.random() * feedUsernames1.length)];
+            const name2 = feedUsernames2[Math.floor(Math.random() * feedUsernames2.length)];
+            const name3 = feedUsernames3[Math.floor(Math.random() * feedUsernames3.length)];
+            const username = `${name1}${name2}${name3}`;
+            const action = feedActions[Math.floor(Math.random() * feedActions.length)];
+            return `> @${username} ${action}`;
+        }
+
+        function addFeedItem() {
+            const feed = dom.liveFeedContainer.querySelector('#live-feed');
+            if (feed.children.length > 4) { // Keep max 5 items
+                feed.removeChild(feed.firstChild);
+            }
+            const text = generateRandomFeedItem();
+            const newItem = document.createElement('p');
+            newItem.className = 'feed-item terminal-glow';
+            newItem.textContent = text;
+            feed.appendChild(newItem);
+        }
+
+        function initLiveFeed() {
+            dom.loadingText.classList.add('hidden');
+            const liveFeedEl = document.createElement('div');
+            liveFeedEl.id = 'live-feed';
+            dom.liveFeedContainer.appendChild(liveFeedEl);
+            addFeedItem(); // Add one immediately
+            feedInterval = setInterval(addFeedItem, 7000);
+        }
+
+        initLiveFeed();
+        dom.usernameInput.focus();
+    </script>
+</body>
+</html>
